@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import time
 
 # Importing keys from .env
 
@@ -46,18 +47,31 @@ for i in instances_filter:
 if len(instances_running) > 0:
     for i in instances_filter:
         ec2.Instance(i.id).terminate()
+        waiter = client.get_waiter("instance_terminated")
+        waiter.wait(InstanceIds=[i.id])
         print("Instance {0} terminated".format(i.id))
 
 else:
     print("No instances to terminate")
 
-# Creating the first instance initialization settings with postgresql (localhost 5432)
+# Filtering and terminating existing security groups
+response_sg = client.describe_security_groups(
+    GroupNames=[
+        "Ohio_SG",
+    ],
+)
+if response_sg:
+    print("Terminating Ohio_SG security group")
+    response_sg1 = client.delete_security_group(GroupName="Ohio_SG")
+else:
+    print("No security groups to terminate")
 
+# Creating the first instance initialization settings with postgresql (localhost 5432)
 h2_postgres = """#!/bin/bash
 sudo apt update
 sudo apt install postgresql postgresql-contrib -y
 sudo -u postgres psql -c "CREATE USER cloud WITH PASSWORD 'cloud';"
-sudo -u postgres psql -c "CREATE DATABASE test OWNER cloud;"
+sudo -u postgres psql -c "CREATE DATABASE tasks OWNER cloud;"
 sudo sed -i "59 c\
 listen_addresses = '*'" /etc/postgresql/12/main/postgresql.conf
 sudo bash -c 'echo "host all all 0.0.0.0/0 trust" >> /etc/postgresql/12/main/pg_hba.conf'
@@ -66,19 +80,13 @@ sudo systemctl restart postgresql
 """
 
 # Security Group
-Ohio_SG = ec2.create_security_group(
-    GroupName="Ohio_SG", Description="Security group of ohio's database"
+Ohio_SG = client.create_security_group(
+    GroupName="Ohio_SG", Description="Security group of ohios database"
 )
 
 data = client.authorize_security_group_ingress(
     GroupId=Ohio_SG["GroupId"],
     IpPermissions=[
-        {
-            "IpProtocol": "tcp",
-            "FromPort": 8080,
-            "ToPort": 8080,
-            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
-        },
         {
             "IpProtocol": "tcp",
             "FromPort": 22,
@@ -93,10 +101,10 @@ data = client.authorize_security_group_ingress(
         },
     ],
 )
-print("Ingress Successfully Set %s" % data)
+print("Ingress Successfully Set {0}".format(data))
 
 # Creating the first instance (ohio)
-instances = ec2.create_instances(
+instance = ec2.create_instances(
     ImageId="ami-0885b1f6bd170450c",  # ubuntu 20.04 LTS (HVM)
     MinCount=1,
     MaxCount=1,
@@ -107,10 +115,14 @@ instances = ec2.create_instances(
     TagSpecifications=[
         {"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": "VerardoTeste"}]}
     ],
-)
+)[0]
 
-for i in instances:
-    print("instance {0} created".format(i.id))
+print("Waiting until instance is running")
+
+instance.wait_until_running()
+instance.reload()
+print(instance.state)
+public_ip_ohio = instance.public_ip_address
 
 # Creating another instance in North Virginia to connect with the ohio's database
 
@@ -125,12 +137,17 @@ ec2_nv = session_nv.resource(
     region_name="us-east-1",  # NV
 )
 
-# Filtering and terminating running instances
+# Clients are similar to resources but operate at a lower level of abstraction
+client_nv = session.client(
+    "ec2",
+    region_name="us-east-1",
+)
 
+# Filtering and terminating running instances
 instances_filter_nv = ec2_nv.instances.filter(
     Filters=[
         {"Name": "instance-state-name", "Values": ["running"]},
-        {"Name": "tag:Name", "Values": ["VerardoTeste"]},
+        {"Name": "tag:Name", "Values": ["VerardoTesteNV"]},
     ]
 )
 
@@ -141,38 +158,80 @@ for i in instances_filter_nv:
 if len(instances_running_nv) > 0:
     for i in instances_filter_nv:
         ec2_nv.Instance(i.id).terminate()
+        waiter = client_nv.get_waiter("instance_terminated")
+        waiter.wait(InstanceIds=[i.id])
         print("Instance {0} terminated".format(i.id))
 
 else:
     print("No instances to terminate")
 
-# Creating the first instance initialization settings with postgresql (localhost 5432)
+# Filtering and terminating existing security groups
+response_sg_nv = client.describe_security_groups(
+    GroupNames=[
+        "NV_SG",
+    ],
+)
+if response_sg_nv:
+    print("Terminating NV_SG security group")
+    response_sg_nv1 = client.delete_security_group(GroupName="NV_SG")
+else:
+    print("No security groups to terminate")
 
-h2_ORM = """#!/bin/bash
-maas login cloudt http://192.168.0.3:5240/MAAS/
-token
-maas cloudt machines allocate name=node2
-maas cloudt machine deploy [system_id]
-ssh ubuntu@node2:192.168.0.3:5240
-cd task/./install.sh
-reboot
-wget http://[IP node2]:8080/admin/
+# Creating the first instance initialization settings
+
+h2_ORM = f"""#!/bin/bash
+sudo apt update
+cd /home/ubuntu/
+git clone https://github.com/thiagoverardo/tasks
+sudo sed -i "83 c 'HOST': '{public_ip_ohio}'," ./tasks/portfolio/settings.py
+cd ./tasks
+sh ./install.sh
+sudo reboot
 """
+# Security Group
+NV_SG = client_nv.create_security_group(
+    GroupName="NV_SG", Description="Security group of north virginia database"
+)
 
-# # Creating the firs instance (ohio)
+data_nv = client_nv.authorize_security_group_ingress(
+    GroupId=NV_SG["GroupId"],
+    IpPermissions=[
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 8080,
+            "ToPort": 8080,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+        },
+    ],
+)
+print(f"Ingress Successfully Set {data_nv}")
 
-instances_nv = ec2_nv.create_instances(
+# Creating instance (ohio)
+
+instance_nv = ec2_nv.create_instances(
     ImageId="ami-0885b1f6bd170450c",  # ubuntu 20.04 LTS (HVM)
     MinCount=1,
     MaxCount=1,
     InstanceType="t2.micro",
     KeyName="VerardoKey",
     UserData=h2_ORM,
+    SecurityGroups=["NV_SG"],
     TagSpecifications=[
-        {"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": "VerardoTeste"}]}
+        {
+            "ResourceType": "instance",
+            "Tags": [{"Key": "Name", "Value": "VerardoTesteNV"}],
+        }
     ],
-)
+)[0]
 
 
-for i in instances_nv:
-    print("instance {0} created".format(i.id))
+instance_nv.wait_until_running()
+instance_nv.reload()
+print(instance_nv.state)
+print(instance_nv.public_ip_address)
