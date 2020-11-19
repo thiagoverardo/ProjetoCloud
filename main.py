@@ -235,3 +235,39 @@ instance_nv.wait_until_running()
 instance_nv.reload()
 print(instance_nv.state)
 print(instance_nv.public_ip_address)
+
+client_lb = session_nv.client("elb", region_name="us-east-1")
+
+try:
+    response_lb_delete = client.delete_load_balancer(LoadBalancerName="ThiagoLB")
+except:
+    print("no lb to delete")
+
+id_SG = client_nv.describe_security_groups(
+    GroupNames=[
+        "NV_SG",
+    ],
+)
+
+response_lb = client_lb.create_load_balancer(
+    LoadBalancerName="ThiagoLB",
+    Listeners=[
+        {
+            "Protocol": "TCP",
+            "LoadBalancerPort": 8080,
+            "InstanceProtocol": "TCP",
+            "InstancePort": 8080,
+        },
+    ],
+    SecurityGroups=[
+        id_SG["SecurityGroups"][0]["GroupId"],
+    ],
+    AvailabilityZones=[
+        "us-east-1a",
+        "us-east-1b",
+        "us-east-1c",
+        "us-east-1d",
+        "us-east-1e",
+        "us-east-1f",
+    ],
+)
