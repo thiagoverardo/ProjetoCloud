@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-import time
 
 # Importing keys from .env
 
@@ -11,11 +10,12 @@ ACCESS_KEY_ID = os.getenv("ACCESS_KEY_ID")
 SECRET_ACCESS_KEY = os.getenv("SECRET_ACCESS_KEY")
 
 import boto3
-from botocore.exceptions import ClientError
+import time
+import requests
 
 # Initializing session in Ohio
 print("===================================================================")
-print("============= Initializing session and client in Ohio =============")
+print("================ Initializing sessions and clients ================")
 print("===================================================================\n")
 
 
@@ -26,14 +26,69 @@ session = boto3.session.Session(
 
 ec2 = session.resource(
     "ec2",
-    region_name="us-east-1",  # para testar está em NV
+    region_name="us-east-2",  # ohio
 )
 
 # Clients are similar to resources but operate at a lower level of abstraction
 client = session.client(
     "ec2",
+    region_name="us-east-2",
+)
+
+session_nv = boto3.session.Session(
+    aws_access_key_id=ACCESS_KEY_ID,
+    aws_secret_access_key=SECRET_ACCESS_KEY,
+)
+
+ec2_nv = session_nv.resource(
+    "ec2",
+    region_name="us-east-1",  # NV
+)
+
+# Clients are similar to resources but operate at a lower level of abstraction
+client_nv = session_nv.client(
+    "ec2",
     region_name="us-east-1",
 )
+
+client_lb = session_nv.client("elb", region_name="us-east-1")
+
+client_asg = session_nv.client("autoscaling", region_name="us-east-1")
+
+print("============= Terminating existing autoscaling group =============\n")
+
+response_asg = client_asg.describe_auto_scaling_groups(
+    AutoScalingGroupNames=[
+        "ASG_NV",
+    ],
+)
+
+if len(response_asg["AutoScalingGroups"]) > 0:
+    delete_asg = response_asg["AutoScalingGroups"][0]["AutoScalingGroupName"]
+    response_asg_delete = client_asg.delete_auto_scaling_group(
+        AutoScalingGroupName=delete_asg,
+        ForceDelete=True,
+    )
+
+    delete_lc = client_asg.delete_launch_configuration(LaunchConfigurationName="ASG_NV")
+else:
+    print("No asg to delete\n")
+
+
+print("============= Terminating existing load balancer =============\n")
+
+try:
+    response_lb = client_lb.describe_load_balancers(
+        LoadBalancerNames=[
+            "ThiagoLB",
+        ],
+    )
+
+    delete_lb = response_lb["LoadBalancerDescriptions"][0]["LoadBalancerName"]
+    response_lb_delete = client_lb.delete_load_balancer(LoadBalancerName=delete_lb)
+
+except:
+    print("No load balancer to terminate\n")
 
 print("============= Terminating existing instances =============\n")
 
@@ -63,26 +118,7 @@ print("=========================================================================
 print("============= Initializing session and client in North Virginia =============")
 print("=============================================================================\n")
 
-# Initializing session in North Virginia
-session_nv = boto3.session.Session(
-    aws_access_key_id=ACCESS_KEY_ID,
-    aws_secret_access_key=SECRET_ACCESS_KEY,
-)
-
-ec2_nv = session_nv.resource(
-    "ec2",
-    region_name="us-east-1",  # NV
-)
-
-# Clients are similar to resources but operate at a lower level of abstraction
-client_nv = session_nv.client(
-    "ec2",
-    region_name="us-east-1",
-)
-
-client_lb = session_nv.client("elb", region_name="us-east-1")
-
-print("============= Terminating existing instances and load balancers =============\n")
+print("====================== Terminating existing instances =======================\n")
 
 # Filtering and terminating running instances
 instances_filter_nv = ec2_nv.instances.filter(
@@ -106,50 +142,20 @@ if len(instances_running_nv) > 0:
 else:
     print("No instances to terminate\n")
 
-print("============= Terminating existing load balancer =============\n")
-
-try:
-    response_lb = client_lb.describe_load_balancers(
-        LoadBalancerNames=[
-            "ThiagoLB",
-        ],
-    )
-
-    delete_lb = response_lb["LoadBalancerDescriptions"][0]["LoadBalancerName"]
-    response_lb_delete = client_lb.delete_load_balancer(LoadBalancerName=delete_lb)
-
-except:
-    print("No load balancer to terminate\n")
-
-print("============= Terminating existing autoscaling group =============\n")
-
-client_asg = session_nv.client("autoscaling", region_name="us-east-1")
-
-try:
-    response_asg = client_asg.describe_auto_scaling_groups(
-        AutoScalingGroupNames=[
-            "ASG_NV",
-        ],
-    )
-
-    delete_asg = response_asg["AutoScalingGroups"][0]["AutoScalingGroupName"]
-    response_asg_delete = client_asg.delete_auto_scaling_group(
-        AutoScalingGroupName=delete_asg
-    )
-
-    delete_lc = client_asg.delete_launch_configuration(LaunchConfigurationName="ASG_NV")
-
-except:
-    print("No autoscaling group to terminate\n")
-
 print("============= Terminating existing security groups =============\n")
-
 # Filtering and terminating existing security groups
 
 for ohio_security_group in client.describe_security_groups()["SecurityGroups"]:
     if ohio_security_group["GroupName"] == "Ohio_SG":
         response_sg1 = client.delete_security_group(GroupName="Ohio_SG")
         print("SG {0} terminated\n".format(ohio_security_group["GroupId"]))
+
+for nv_security_group in client_nv.describe_security_groups()["SecurityGroups"]:
+    if nv_security_group["GroupName"] == "NV_SG":
+        response_sg_nv1 = client_nv.delete_security_group(GroupName="NV_SG")
+        print("SG {0} terminated\n".format(nv_security_group["GroupId"]))
+
+print("============= Creating instance initialization with ORM =============\n")
 
 print("============= Creating instance initialization database =============\n")
 
@@ -189,19 +195,37 @@ data = client.authorize_security_group_ingress(
         },
     ],
 )
-print("Ingress Successfully Set {0}\n".format(data))
+print("Ingress Successfully Set\n")
 
 print("=============================================================================")
 print("============================= Creating instance =============================")
 print("=============================================================================\n")
 
+response_key = client.describe_key_pairs(
+    KeyNames=[
+        "KeyTeste",
+    ],
+)
+
+# Deleting Keypair
+if len(response_key["KeyPairs"]) > 0:
+    response_key_delete = client.delete_key_pair(
+        KeyName="KeyTeste",
+    )
+    print("Deleted keypair")
+
+# Creating Keypair
+response_key_create = client.create_key_pair(
+    KeyName="KeyTeste",
+)
+
 # Creating the first instance (ohio)
 instance = ec2.create_instances(
-    ImageId="ami-0885b1f6bd170450c",  # ubuntu 20.04 LTS (HVM)
+    ImageId="ami-0a91cd140a1fc148a",  # ubuntu 20.04 LTS (HVM)
     MinCount=1,
     MaxCount=1,
     InstanceType="t2.micro",
-    KeyName="VerardoKey",
+    KeyName="KeyTeste",
     UserData=h2_postgres,
     SecurityGroups=["Ohio_SG"],
     TagSpecifications=[
@@ -220,16 +244,6 @@ public_ip_ohio = instance.public_ip_address
 # ===============================================================================
 # Creating another instance in North Virginia to connect with the ohio's database
 # ===============================================================================
-
-# Filtering and terminating existing security groups
-print("============= Terminating existing security groups =============\n")
-
-for nv_security_group in client_nv.describe_security_groups()["SecurityGroups"]:
-    if nv_security_group["GroupName"] == "NV_SG":
-        response_sg_nv1 = client_nv.delete_security_group(GroupName="NV_SG")
-        print("SG {0} terminated\n".format(nv_security_group["GroupId"]))
-
-print("============= Creating instance initialization with ORM =============\n")
 
 # Creating the first instance initialization settings
 
@@ -273,14 +287,29 @@ print("=========================================================================
 print("============================ Creating instance 2 ============================")
 print("=============================================================================\n")
 
-# Creating instance (ohio)
+response_key_nv = client_nv.describe_key_pairs(
+    KeyNames=[
+        "KeyTesteNV",
+    ],
+)
+# Deleting Keypair
+if len(response_key_nv["KeyPairs"]) > 0:
+    response_key_delete_nv = client_nv.delete_key_pair(
+        KeyName="KeyTesteNV",
+    )
 
+# Creating Keypair
+response_key_create_nv = client_nv.create_key_pair(
+    KeyName="KeyTesteNV",
+)
+
+# Creating instance (ohio)
 instance_nv = ec2_nv.create_instances(
     ImageId="ami-0885b1f6bd170450c",  # ubuntu 20.04 LTS (HVM)
     MinCount=1,
     MaxCount=1,
     InstanceType="t2.micro",
-    KeyName="VerardoKey",
+    KeyName="KeyTesteNV",
     UserData=h2_ORM,
     SecurityGroups=["NV_SG"],
     TagSpecifications=[
@@ -338,6 +367,8 @@ id_TG_LB = client_lb.describe_load_balancers(
     ],
 )
 
+print(instance_nv.id)
+
 response_asg = client_asg.create_auto_scaling_group(
     AutoScalingGroupName="ASG_NV",
     InstanceId=instance_nv.id,
@@ -346,6 +377,7 @@ response_asg = client_asg.create_auto_scaling_group(
     LoadBalancerNames=[
         "ThiagoLB",
     ],
+    Tags=[{"Key": "Name", "Value": "ASG_NV_INSTANCE"}],
 )
 
 response_attach_lb = client_asg.attach_load_balancers(
@@ -354,3 +386,20 @@ response_attach_lb = client_asg.attach_load_balancers(
         "ThiagoLB",
     ],
 )
+
+print("=============================================================================")
+print("============================= Creating requests =============================")
+print("=============================================================================\n")
+
+dnsLB = response_lb["DNSName"]
+print("LB url {0}".format(dnsLB))
+dnsLB_str = '"http://{0}:8080/tasks/"'.format(dnsLB)
+print(dnsLB_str)
+
+with open("client.py", "r") as f:
+    file = f.readlines()
+    file[4] = "urlLB =" + dnsLB_str
+
+with open("client.py", "w") as f:
+    f.writelines(file)
+    print(file)
