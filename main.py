@@ -57,21 +57,27 @@ client_asg = session_nv.client("autoscaling", region_name="us-east-1")
 
 print("============= Terminating existing autoscaling group =============\n")
 
-response_asg = client_asg.describe_auto_scaling_groups(
-    AutoScalingGroupNames=[
-        "ASG_NV",
-    ],
-)
-
-if len(response_asg["AutoScalingGroups"]) > 0:
-    delete_asg = response_asg["AutoScalingGroups"][0]["AutoScalingGroupName"]
-    response_asg_delete = client_asg.delete_auto_scaling_group(
-        AutoScalingGroupName=delete_asg,
-        ForceDelete=True,
+try:
+    response_asg = client_asg.describe_auto_scaling_groups(
+        AutoScalingGroupNames=[
+            "ASG_NV",
+        ],
     )
 
-    delete_lc = client_asg.delete_launch_configuration(LaunchConfigurationName="ASG_NV")
-else:
+    if len(response_asg["AutoScalingGroups"]) > 0:
+        delete_asg = response_asg["AutoScalingGroups"][0]["AutoScalingGroupName"]
+        response_asg_delete = client_asg.delete_auto_scaling_group(
+            AutoScalingGroupName=delete_asg,
+            ForceDelete=True,
+        )
+
+        delete_lc = client_asg.delete_launch_configuration(
+            LaunchConfigurationName="ASG_NV"
+        )
+    else:
+        print("No asg to delete\n")
+
+except:
     print("No asg to delete\n")
 
 
@@ -93,25 +99,30 @@ except:
 print("============= Terminating existing instances =============\n")
 
 # Filtering and terminating running instances
-instances_filter = ec2.instances.filter(
-    Filters=[
-        {"Name": "instance-state-name", "Values": ["running"]},
-        {"Name": "tag:Name", "Values": ["VerardoTeste"]},
-    ]
-)
 
-instances_running = []
-for i in instances_filter:
-    instances_running.append(i.id)
+try:
+    instances_filter = ec2.instances.filter(
+        Filters=[
+            {"Name": "instance-state-name", "Values": ["running"]},
+            {"Name": "tag:Name", "Values": ["VerardoTeste"]},
+        ]
+    )
 
-if len(instances_running) > 0:
+    instances_running = []
     for i in instances_filter:
-        waiter = client.get_waiter("instance_terminated")
-        client.terminate_instances(InstanceIds=[i.id])
-        waiter.wait(InstanceIds=[i.id])
-        print("Instance {0} terminated\n".format(i.id))
+        instances_running.append(i.id)
 
-else:
+    if len(instances_running) > 0:
+        for i in instances_filter:
+            waiter = client.get_waiter("instance_terminated")
+            client.terminate_instances(InstanceIds=[i.id])
+            waiter.wait(InstanceIds=[i.id])
+            print("Instance {0} terminated\n".format(i.id))
+
+    else:
+        print("No instances to terminate\n")
+
+except:
     print("No instances to terminate\n")
 
 print("=============================================================================")
@@ -121,39 +132,47 @@ print("=========================================================================
 print("====================== Terminating existing instances =======================\n")
 
 # Filtering and terminating running instances
-instances_filter_nv = ec2_nv.instances.filter(
-    Filters=[
-        {"Name": "instance-state-name", "Values": ["running"]},
-        {"Name": "tag:Name", "Values": ["NVVerardo"]},
-    ]
-)
+try:
+    instances_filter_nv = ec2_nv.instances.filter(
+        Filters=[
+            {"Name": "instance-state-name", "Values": ["running"]},
+            {"Name": "tag:Name", "Values": ["NVVerardo"]},
+        ]
+    )
 
-instances_running_nv = []
-for i in instances_filter_nv:
-    instances_running_nv.append(i.id)
-
-if len(instances_running_nv) > 0:
+    instances_running_nv = []
     for i in instances_filter_nv:
-        waiter_nv = client_nv.get_waiter("instance_terminated")
-        client_nv.terminate_instances(InstanceIds=[i.id])
-        waiter_nv.wait(InstanceIds=[i.id])
-        print("Instance {0} terminated\n".format(i.id))
+        instances_running_nv.append(i.id)
 
-else:
+    if len(instances_running_nv) > 0:
+        for i in instances_filter_nv:
+            waiter_nv = client_nv.get_waiter("instance_terminated")
+            client_nv.terminate_instances(InstanceIds=[i.id])
+            waiter_nv.wait(InstanceIds=[i.id])
+            print("Instance {0} terminated\n".format(i.id))
+
+    else:
+        print("No instances to terminate\n")
+except:
     print("No instances to terminate\n")
 
 print("============= Terminating existing security groups =============\n")
 # Filtering and terminating existing security groups
+try:
+    for ohio_security_group in client.describe_security_groups()["SecurityGroups"]:
+        if ohio_security_group["GroupName"] == "Ohio_SG":
+            response_sg1 = client.delete_security_group(GroupName="Ohio_SG")
+            print("SG {0} terminated\n".format(ohio_security_group["GroupId"]))
+except:
+    print("No security groups to terminate\n")
 
-for ohio_security_group in client.describe_security_groups()["SecurityGroups"]:
-    if ohio_security_group["GroupName"] == "Ohio_SG":
-        response_sg1 = client.delete_security_group(GroupName="Ohio_SG")
-        print("SG {0} terminated\n".format(ohio_security_group["GroupId"]))
-
-for nv_security_group in client_nv.describe_security_groups()["SecurityGroups"]:
-    if nv_security_group["GroupName"] == "NV_SG":
-        response_sg_nv1 = client_nv.delete_security_group(GroupName="NV_SG")
-        print("SG {0} terminated\n".format(nv_security_group["GroupId"]))
+try:
+    for nv_security_group in client_nv.describe_security_groups()["SecurityGroups"]:
+        if nv_security_group["GroupName"] == "NV_SG":
+            response_sg_nv1 = client_nv.delete_security_group(GroupName="NV_SG")
+            print("SG {0} terminated\n".format(nv_security_group["GroupId"]))
+except:
+    print("No security groups to terminate\n")
 
 print("============= Creating instance initialization with ORM =============\n")
 
@@ -175,7 +194,7 @@ print("============= Creating Ohio Security Group =============\n")
 
 # Security Group
 Ohio_SG = client.create_security_group(
-    GroupName="Ohio_SG", Description="Security group of ohios database"
+    GroupName="Ohio_SG", Description="Security group of ohio"
 )
 
 data = client.authorize_security_group_ingress(
@@ -201,23 +220,28 @@ print("=========================================================================
 print("============================= Creating instance =============================")
 print("=============================================================================\n")
 
-response_key = client.describe_key_pairs(
-    KeyNames=[
-        "KeyTeste",
-    ],
-)
+try:
+    response_key = client.describe_key_pairs(
+        KeyNames=[
+            "KeyTeste",
+        ],
+    )
 
-# Deleting Keypair
-if len(response_key["KeyPairs"]) > 0:
-    response_key_delete = client.delete_key_pair(
+    # Deleting Keypair
+    if len(response_key["KeyPairs"]) > 0:
+        response_key_delete = client.delete_key_pair(
+            KeyName="KeyTeste",
+        )
+        print("Deleted keypair")
+
+    # Creating Keypair
+    response_key_create = client.create_key_pair(
         KeyName="KeyTeste",
     )
-    print("Deleted keypair")
-
-# Creating Keypair
-response_key_create = client.create_key_pair(
-    KeyName="KeyTeste",
-)
+except:
+    response_key_create = client.create_key_pair(
+        KeyName="KeyTeste",
+    )
 
 # Creating the first instance (ohio)
 instance = ec2.create_instances(
@@ -261,7 +285,7 @@ print("============= Creating North Virginia Security Group =============\n")
 
 # Security Group
 NV_SG = client_nv.create_security_group(
-    GroupName="NV_SG", Description="Security group of north virginia database"
+    GroupName="NV_SG", Description="Security group of north virginia"
 )
 
 data_nv = client_nv.authorize_security_group_ingress(
@@ -287,21 +311,26 @@ print("=========================================================================
 print("============================ Creating instance 2 ============================")
 print("=============================================================================\n")
 
-response_key_nv = client_nv.describe_key_pairs(
-    KeyNames=[
-        "KeyTesteNV",
-    ],
-)
-# Deleting Keypair
-if len(response_key_nv["KeyPairs"]) > 0:
-    response_key_delete_nv = client_nv.delete_key_pair(
+try:
+    response_key_nv = client_nv.describe_key_pairs(
+        KeyNames=[
+            "KeyTesteNV",
+        ],
+    )
+    # Deleting Keypair
+    if len(response_key_nv["KeyPairs"]) > 0:
+        response_key_delete_nv = client_nv.delete_key_pair(
+            KeyName="KeyTesteNV",
+        )
+
+    # Creating Keypair
+    response_key_create_nv = client_nv.create_key_pair(
         KeyName="KeyTesteNV",
     )
-
-# Creating Keypair
-response_key_create_nv = client_nv.create_key_pair(
-    KeyName="KeyTesteNV",
-)
+except:
+    response_key_create_nv = client_nv.create_key_pair(
+        KeyName="KeyTesteNV",
+    )
 
 # Creating instance (ohio)
 instance_nv = ec2_nv.create_instances(
@@ -398,7 +427,8 @@ print(dnsLB_str)
 
 with open("client.py", "r") as f:
     file = f.readlines()
-    file[4] = "urlLB =" + dnsLB_str
+    file[4] = "urlLB =" + dnsLB_str + "\n"
+    file[5] = "\n"
 
 with open("client.py", "w") as f:
     f.writelines(file)

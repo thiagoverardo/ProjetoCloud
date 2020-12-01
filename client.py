@@ -2,13 +2,13 @@ import click
 import requests
 import json
 
-urlLB = "http://ThiagoLB-1540369818.us-east-1.elb.amazonaws.com:8080/tasks/"
+urlLB = "http://ThiagoLB-1930288161.us-east-1.elb.amazonaws.com:8080/tasks/"
 
 
 @click.command()
 @click.option("-i", "--instruction", default="GET")
 @click.option("-t", "--title", default="foo")
-@click.option("-p", "--pub_date", default="2000-11-27T00:00:00Z")
+@click.option("-p", "--pub_date", default="2000-12-02T13:05:00Z")
 @click.option("-d", "--description", default="bar")
 def command(instruction, title, pub_date, description):
 
