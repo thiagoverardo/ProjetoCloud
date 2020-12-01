@@ -4,7 +4,7 @@ load_dotenv()
 
 import os
 
-# Importing keys from .env
+# Importing aws access keys from .env
 
 ACCESS_KEY_ID = os.getenv("ACCESS_KEY_ID")
 SECRET_ACCESS_KEY = os.getenv("SECRET_ACCESS_KEY")
@@ -55,7 +55,7 @@ client_lb = session_nv.client("elb", region_name="us-east-1")
 
 client_asg = session_nv.client("autoscaling", region_name="us-east-1")
 
-print("============= Terminating existing autoscaling group =============\n")
+print("=============== Deleting existing autoscaling group ===============\n")
 
 try:
     response_asg = client_asg.describe_auto_scaling_groups(
@@ -74,14 +74,16 @@ try:
         delete_lc = client_asg.delete_launch_configuration(
             LaunchConfigurationName="ASG_NV"
         )
+        print("ASG deleted\n")
+
     else:
-        print("No asg to delete\n")
+        print("No ASG to delete\n")
 
 except:
-    print("No asg to delete\n")
+    print("No ASG to delete\n")
 
 
-print("============= Terminating existing load balancer =============\n")
+print("================= Deleting existing load balancer =================\n")
 
 try:
     response_lb = client_lb.describe_load_balancers(
@@ -93,10 +95,12 @@ try:
     delete_lb = response_lb["LoadBalancerDescriptions"][0]["LoadBalancerName"]
     response_lb_delete = client_lb.delete_load_balancer(LoadBalancerName=delete_lb)
 
+    print("LB deleted\n")
+
 except:
     print("No load balancer to terminate\n")
 
-print("============= Terminating existing instances =============\n")
+print("============= Terminating existing instances in Ohio =============\n")
 
 # Filtering and terminating running instances
 
@@ -125,11 +129,7 @@ try:
 except:
     print("No instances to terminate\n")
 
-print("=============================================================================")
-print("============= Initializing session and client in North Virginia =============")
-print("=============================================================================\n")
-
-print("====================== Terminating existing instances =======================\n")
+print("============== Terminating existing instances in NV ===============\n")
 
 # Filtering and terminating running instances
 try:
@@ -157,6 +157,7 @@ except:
     print("No instances to terminate\n")
 
 print("============= Terminating existing security groups =============\n")
+
 # Filtering and terminating existing security groups
 try:
     for ohio_security_group in client.describe_security_groups()["SecurityGroups"]:
@@ -174,23 +175,7 @@ try:
 except:
     print("No security groups to terminate\n")
 
-print("============= Creating instance initialization with ORM =============\n")
-
-print("============= Creating instance initialization database =============\n")
-
-# Creating the first instance initialization settings with postgresql (localhost 5432)
-h2_postgres = """#!/bin/bash
-sudo apt update
-sudo apt install postgresql postgresql-contrib -y
-sudo -u postgres psql -c "CREATE USER cloud WITH PASSWORD 'cloud';"
-sudo -u postgres psql -c "CREATE DATABASE tasks OWNER cloud;"
-sudo sed -i "59 c listen_addresses = '*'" /etc/postgresql/12/main/postgresql.conf
-sudo bash -c 'echo "host all all 0.0.0.0/0 trust" >> /etc/postgresql/12/main/pg_hba.conf'
-sudo ufw allow 5432/tcp
-sudo systemctl restart postgresql
-"""
-
-print("============= Creating Ohio Security Group =============\n")
+print("================= Creating Ohio Security Group =================\n")
 
 # Security Group
 Ohio_SG = client.create_security_group(
@@ -217,7 +202,7 @@ data = client.authorize_security_group_ingress(
 print("Ingress Successfully Set\n")
 
 print("=============================================================================")
-print("============================= Creating instance =============================")
+print("========================= Creating Ohio's instance ==========================")
 print("=============================================================================\n")
 
 try:
@@ -232,16 +217,32 @@ try:
         response_key_delete = client.delete_key_pair(
             KeyName="KeyTeste",
         )
-        print("Deleted keypair")
+        print("Deleted old keypair\n")
 
     # Creating Keypair
     response_key_create = client.create_key_pair(
         KeyName="KeyTeste",
     )
+    print("New keypair created\n")
 except:
     response_key_create = client.create_key_pair(
         KeyName="KeyTeste",
     )
+    print("New keypair created\n")
+
+print("============= Creating instance initialization with database =============\n")
+
+# Creating the first instance initialization settings with postgresql (localhost 5432)
+h2_postgres = """#!/bin/bash
+sudo apt update
+sudo apt install postgresql postgresql-contrib -y
+sudo -u postgres psql -c "CREATE USER cloud WITH PASSWORD 'cloud';"
+sudo -u postgres psql -c "CREATE DATABASE tasks OWNER cloud;"
+sudo sed -i "59 c listen_addresses = '*'" /etc/postgresql/12/main/postgresql.conf
+sudo bash -c 'echo "host all all 0.0.0.0/0 trust" >> /etc/postgresql/12/main/pg_hba.conf'
+sudo ufw allow 5432/tcp
+sudo systemctl restart postgresql
+"""
 
 # Creating the first instance (ohio)
 instance = ec2.create_instances(
@@ -257,29 +258,12 @@ instance = ec2.create_instances(
     ],
 )[0]
 
-print("Waiting until instance is running\n")
+print("Waiting until ohio's instance is running\n")
 
 instance.wait_until_running()
 instance.reload()
-print(instance.state)
-print("\n")
+print(instance.state["Name"])
 public_ip_ohio = instance.public_ip_address
-
-# ===============================================================================
-# Creating another instance in North Virginia to connect with the ohio's database
-# ===============================================================================
-
-# Creating the first instance initialization settings
-
-h2_ORM = f"""#!/bin/bash
-sudo apt update
-cd /home/ubuntu/
-git clone https://github.com/thiagoverardo/tasks
-sudo sed -i "83 c 'HOST': '{public_ip_ohio}'," ./tasks/portfolio/settings.py
-cd ./tasks
-sh ./install.sh
-sudo reboot
-"""
 
 print("============= Creating North Virginia Security Group =============\n")
 
@@ -305,10 +289,14 @@ data_nv = client_nv.authorize_security_group_ingress(
         },
     ],
 )
-print("Ingress Successfully Set {0}\n".format(data_nv))
+print("Ingress Successfully Set\n")
 
-print("=============================================================================")
-print("============================ Creating instance 2 ============================")
+# ===========================================================================
+# Creating new instance in North Virginia to connect with the ohio's database
+# ===========================================================================
+
+print("\n=============================================================================")
+print("=========================== Creating NV's instance ==========================")
 print("=============================================================================\n")
 
 try:
@@ -317,20 +305,36 @@ try:
             "KeyTesteNV",
         ],
     )
-    # Deleting Keypair
+
     if len(response_key_nv["KeyPairs"]) > 0:
         response_key_delete_nv = client_nv.delete_key_pair(
             KeyName="KeyTesteNV",
         )
+        print("Deleted old keypair\n")
 
     # Creating Keypair
     response_key_create_nv = client_nv.create_key_pair(
         KeyName="KeyTesteNV",
     )
+    print("New keypair created\n")
+
 except:
     response_key_create_nv = client_nv.create_key_pair(
         KeyName="KeyTesteNV",
     )
+    print("Creating new keypair\n")
+
+print("\n============= Creating instance initialization with ORM =============\n")
+
+h2_ORM = f"""#!/bin/bash
+sudo apt update
+cd /home/ubuntu/
+git clone https://github.com/thiagoverardo/tasks
+sudo sed -i "83 c 'HOST': '{public_ip_ohio}'," ./tasks/portfolio/settings.py
+cd ./tasks
+sh ./install.sh
+sudo reboot
+"""
 
 # Creating instance (ohio)
 instance_nv = ec2_nv.create_instances(
@@ -353,11 +357,10 @@ print("Waiting until instance is running\n")
 
 instance_nv.wait_until_running()
 instance_nv.reload()
-print(instance_nv.state)
-print(instance_nv.public_ip_address)
-print("\n")
+print(instance_nv.state["Name"])
+print("\nNV's instance IP: {0}\n".format(instance_nv.public_ip_address))
 
-print("============= Creating load balancer =============\n")
+print("==================== Creating load balancer ====================\n")
 
 id_SG = client_nv.describe_security_groups(
     GroupNames=[
@@ -387,16 +390,15 @@ response_lb = client_lb.create_load_balancer(
         "us-east-1f",
     ],
 )
+print("Load balancer created\n")
 
-print("============= Creating autoscaling group =============\n")
+print("================ Creating autoscaling group ================\n")
 
 id_TG_LB = client_lb.describe_load_balancers(
     LoadBalancerNames=[
         "ThiagoLB",
     ],
 )
-
-print(instance_nv.id)
 
 response_asg = client_asg.create_auto_scaling_group(
     AutoScalingGroupName="ASG_NV",
@@ -416,12 +418,13 @@ response_attach_lb = client_asg.attach_load_balancers(
     ],
 )
 
+print("ASG created\n")
+
 print("=============================================================================")
-print("============================= Creating requests =============================")
+print("============================= Editing client.py =============================")
 print("=============================================================================\n")
 
 dnsLB = response_lb["DNSName"]
-print("LB url {0}".format(dnsLB))
 dnsLB_str = '"http://{0}:8080/tasks/"'.format(dnsLB)
 print(dnsLB_str)
 
@@ -432,4 +435,28 @@ with open("client.py", "r") as f:
 
 with open("client.py", "w") as f:
     f.writelines(file)
-    print(file)
+
+print(
+    "\n========================= Instructions to run client.py ========================\n"
+)
+
+print(
+    "\n============ WARNING: Wait 10 minutes before testing the client=================\n"
+)
+print('To test the client run the code "Python client.py"\n')
+print("This command will run the default code, that is a simple GET all tasks\n")
+print(
+    'To run a GET instruction you have to put on your terminal "Python client.py -i GET"\n'
+)
+print(
+    'To run a POST instruction you have to put on your terminal "Python client.py -i POST"'
+)
+print("You also have to write the arguments of the task after POST")
+print('"-t title -p publication date -d description"')
+print(
+    'Example of a post instruction on terminal: "Python client.py -i POST -t rice -p 2000-12-02T13:05:00Z -d buy"\n'
+)
+print(
+    "(If you don`t write the arguments to the POST instruction, it will complete with default text)\n"
+)
+print("The last command is DELETE, that deletes all tasks\n")
