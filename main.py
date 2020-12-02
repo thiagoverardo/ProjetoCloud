@@ -265,7 +265,7 @@ instance.reload()
 print(instance.state["Name"])
 public_ip_ohio = instance.public_ip_address
 
-print("============= Creating North Virginia Security Group =============\n")
+print("\n============= Creating North Virginia Security Group =============\n")
 
 # Security Group
 NV_SG = client_nv.create_security_group(

@@ -2,7 +2,7 @@ import click
 import requests
 import json
 
-urlLB ="http://ThiagoLB-2050546676.us-east-1.elb.amazonaws.com:8080/tasks/"
+urlLB ="http://ThiagoLB-1567967504.us-east-1.elb.amazonaws.com:8080/tasks/"
 
 
 @click.command()
